@@ -1,10 +1,15 @@
-# webstockandtrademarket · boceto
+# webstockandtrademarket
 
-Página web con tres paneles:
+Plataforma académica con cuatro paneles:
 
-1. **Mercado**: precios del S&P 500 completo, ETFs, materias primas y criptomonedas desde Yahoo Finance; mayores alzas y caídas del día; mejores y peores de los últimos 90 días; buscador de cualquier activo y últimas noticias.
-2. **Invertir**: perfil de riesgo + monto (US$ 1 a US$ 9.999.999.999) → cartera óptima con el modelo híbrido Black-Litterman + Markowitz + CAPM dinámico (betas rodantes y regímenes ocultos de Markov) → proyección Monte Carlo (peor, más probable y mejor escenario con sus probabilidades) → gráfico TradingView y análisis técnico.
-3. **Mi cartera**: el usuario ingresa activos, cantidades y fechas de compra → rentabilidad real, comparación con el S&P 500, proyección Monte Carlo con recta de tendencia y estudio técnico.
+1. **Mercado**: franja con las 3 mayores alzas, las 3 mayores caídas del día y el dólar/peso chileno; precios del S&P 500 completo, ETFs, materias primas y criptomonedas desde Yahoo Finance; mejores y peores de los últimos 90 días; buscador de cualquier activo y noticias económicas (FT, WSJ, The Economist, NYT, BBC, Yahoo Finance, Diario Financiero, Banco Central de Chile y Ministerio de Economía) que se renuevan cada 30 minutos.
+2. **Invertir**: perfil de riesgo + monto → preselección automática de activos según el perfil (volatilidad, caídas recientes y tendencia) → cartera óptima con el modelo híbrido Black-Litterman + Markowitz + CAPM dinámico (betas rodantes y regímenes ocultos de Markov) → proyección Monte Carlo → gráfico TradingView (con pantalla completa) y análisis técnico.
+3. **Mi cartera**: el usuario ingresa activo, fecha y cantidad o monto invertido (y opcionalmente el precio por unidad) → rentabilidad real, comparación con el S&P 500, proyección Monte Carlo con recta de tendencia y estudio técnico.
+4. **Acerca de**: propósito académico (no es corredor ni asesoría), fuentes de datos y metodología completa con fórmulas y referencias.
+
+> **Importante al subir a GitHub:** la carpeta `.streamlit` (con `config.toml`) debe estar en el repositorio.
+> Ahí están los colores, la tipografía y el tema claro. Si falta, la página se ve con el tema oscuro y los colores
+> rojos por defecto de Streamlit.
 
 Está hecha 100% en **Python** con **Streamlit** (la forma más rápida y estable de publicar un boceto con cálculos financieros pesados). Más adelante se puede rehacer la parte visual en TypeScript sin tocar los modelos.
 
@@ -111,15 +116,19 @@ Todos los parámetros están en `nucleo/modelo.py` y casi todos se pueden cambia
 | Parámetro | Valor por defecto | Dónde |
 |---|---|---|
 | Años de historia | 5 | `PARAMETROS_POR_DEFECTO["anios_historia"]` |
-| Ventana de betas rodantes | 126 días | `["ventana_beta"]` |
-| N.º de regímenes de Markov | 2 | `["n_regimenes"]` |
-| Horizonte de la vista CAPM | 63 días | `["horizonte_vista"]` |
-| Mezcla beta rodante / por régimen | 0,5 | `["mezcla_beta"]` |
+| Ventana de la regresión de betas (MCO sobre excesos de retorno) | 60 días | `["ventana_beta"]` |
+| N.º de regímenes de Markov (EM + Viterbi) | 2 | `["n_regimenes"]` |
+| Días que se promedian las vistas CAPM-HMM | 20 | `["ventana_vista"]` |
+| Tope de las vistas | ±30% anual | `["tope_vista"]` |
 | τ de Black-Litterman | 0,05 | `["tau"]` |
+| Bandas sectoriales | ±10% sobre el S&P 500 | `["bandas_sectoriales"]`, `["banda_sectorial"]` |
+| Pesos sectoriales del S&P 500 | ChartRow 29-10-2026 | `nucleo/universo.py → PESOS_SECTORES_SP500` |
 | Aversión al riesgo (λ) por perfil | 1,5 / 4 / 10 | `PERFILES` |
 | Máximo por activo, cripto y mínimo en bonos/oro | ver `PERFILES` | `PERFILES` |
 | Matriz Ω (confianza en las vistas) | τ·σ²·(1+inestabilidad de la beta)/confianza del régimen | `construir_cartera()` |
-| Activos candidatos | 33 activos | `nucleo/universo.py → CANDIDATOS_CARTERA` |
+| Universo del modo automático | ~60 activos | `nucleo/universo.py → POOL_AUTOMATICO` |
+| Filtros y cupos por perfil | ver tabla | `nucleo/seleccion.py → REGLAS` |
+| Autores (pie de página) | vacío | `nucleo/config.py → AUTORES` |
 
 ---
 
@@ -127,13 +136,16 @@ Todos los parámetros están en `nucleo/modelo.py` y casi todos se pueden cambia
 
 ```
 webstockandtrademarket/
-├── app.py                 ← punto de entrada (menú con los 3 paneles)
+├── app.py                 ← punto de entrada (menú con los 4 paneles)
 ├── paginas/
 │   ├── inicio.py          ← Panel 1: Mercado
 │   ├── inversion.py       ← Panel 2: Invertir
-│   └── mi_cartera.py      ← Panel 3: Mi cartera
+│   ├── mi_cartera.py      ← Panel 3: Mi cartera
+│   └── acerca.py          ← Panel 4: Acerca de (metodología)
 ├── nucleo/
 │   ├── datos.py           ← descarga desde Yahoo con caché y respaldo
+│   ├── noticias.py        ← noticias RSS por medio (secciones de economía/finanzas)
+│   ├── seleccion.py       ← preselección automática de activos por perfil
 │   ├── modelo.py          ← HMM, betas rodantes, CAPM dinámico, Black-Litterman, Markowitz
 │   ├── montecarlo.py      ← simulación con cambios de régimen
 │   ├── tecnico.py         ← RSI, MACD, Bollinger, medias móviles, métricas de riesgo

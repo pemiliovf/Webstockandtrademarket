@@ -1,36 +1,23 @@
-"""Panel 1 — Mercado: precios, mejores y peores rendimientos y noticias."""
-
-import html
+"""Panel 1 — Mercado: franja de movimientos, rendimientos y noticias."""
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-from nucleo import datos, graficos, ui, universo
+from nucleo import datos, graficos, noticias, ui, universo
 
 ui.preparar_pagina()
-ui.encabezado("Mercado hoy",
-              f"Precios, rendimientos y noticias desde Yahoo Finance · actualizado {datos.hora_chile()} (hora de Chile)")
+ui.encabezado("Mercados hoy",
+              f"Mayores alzas y caídas del día, rendimientos de 90 días, precios de más de 550 activos y noticias "
+              f"económicas de Chile y el mundo. Actualizado {datos.hora_chile()} (hora de Chile).",
+              "Panel de mercado")
 
-# --------------------------------------------------------------------------
-# Franja de índices
-# --------------------------------------------------------------------------
-franja, aviso_franja = datos.precios_cierre(universo.FRANJA_INICIO, "3mo")
-columnas = st.columns(len(universo.FRANJA_INICIO))
-for col, t in zip(columnas, universo.FRANJA_INICIO):
-    s = franja[t].dropna() if t in franja.columns else pd.Series(dtype=float)
-    with col:
-        if len(s) >= 2:
-            color = "inverse" if t == "^VIX" else ("off" if t == "CLP=X" else "normal")
-            st.metric(universo.INDICES.get(t, universo.nombre_de(t)), ui.num(s.iloc[-1]),
-                      ui.pct(s.iloc[-1] / s.iloc[-2] - 1, 2), delta_color=color, border=True,
-                      chart_data=s.iloc[-60:].round(4).tolist(), chart_type="area")
-        else:
-            st.metric(universo.INDICES.get(t, t), "—", border=True)
+N_FRANJA = 3          # alzas y caídas que se muestran arriba
+DIVISA = "CLP=X"      # dólar / peso chileno
 
 
 # --------------------------------------------------------------------------
-# Universo completo y rendimientos
+# Rendimientos del universo completo
 # --------------------------------------------------------------------------
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def calcular_rendimientos(precios: pd.DataFrame, univ: pd.DataFrame) -> pd.DataFrame:
@@ -60,13 +47,122 @@ def calcular_rendimientos(precios: pd.DataFrame, univ: pd.DataFrame) -> pd.DataF
     return pd.DataFrame(filas)
 
 
+def armar_franja(sube: pd.DataFrame, baja: pd.DataFrame):
+    """3 mayores alzas + 3 mayores caídas + dólar/peso, con minigráfico de 3 meses."""
+    arriba, abajo = sube.head(N_FRANJA), baja.head(N_FRANJA)
+    tickers = list(arriba["Ticker"]) + list(abajo["Ticker"]) + [DIVISA]
+    historia, _ = datos.precios_cierre(tickers, "3mo")
+    fichas = []
+    for grupo, df, clase in (("Mayor alza", arriba, "sube"), ("Mayor caída", abajo, "baja")):
+        for i, (_, r) in enumerate(df.iterrows(), start=1):
+            t = r["Ticker"]
+            serie = historia[t].dropna().iloc[-60:].tolist() if t in historia.columns else []
+            fichas.append({"tag": f"{grupo} · {i}", "clase": clase, "ticker": t, "nombre": r["Nombre"],
+                           "precio": r["Precio"], "var": r["Var. %"], "serie": serie, "url": ui.url_yahoo(t)})
+    s = historia[DIVISA].dropna() if DIVISA in historia.columns else pd.Series(dtype=float)
+    fichas.append({"tag": "Divisa · Chile", "clase": "neutro", "ticker": "USD/CLP", "nombre": "Dólar / Peso chileno",
+                   "precio_txt": f"{ui.num(s.iloc[-1])} CLP" if len(s) else "—",
+                   "var": float(s.iloc[-1] / s.iloc[-2] - 1) if len(s) >= 2 else np.nan,
+                   "serie": s.iloc[-60:].tolist(), "url": ui.url_yahoo(DIVISA)})
+    ui.franja(fichas)
+
+
+def preparar_screener(df: pd.DataFrame) -> pd.DataFrame:
+    return df.assign(**{"Var. %": df["Var. %"] / 100}).drop(columns="Volumen", errors="ignore")
+
+
+# --------------------------------------------------------------------------
+# Franja superior
+# --------------------------------------------------------------------------
+lugar_franja = st.container()
+sube, baja, aviso_scr = datos.movimientos_del_dia(15)
+fuente_mov = ("Fuente: screener de Yahoo Finance sobre todo el mercado accionario de EE.UU. (capitalización ≥ "
+              "US$ 2.000 millones y precio ≥ US$ 5; alzas superiores a 3% y caídas superiores a 2,5% en el día).")
+if sube is not None and baja is not None and not sube.empty and not baja.empty:
+    sube, baja = preparar_screener(sube), preparar_screener(baja)
+    with lugar_franja:
+        armar_franja(sube, baja)
+else:
+    sube = baja = None
+
+izquierda, derecha = st.columns([2.15, 1], gap="large")
+
+
+# --------------------------------------------------------------------------
+# Noticias (se renuevan solas cada 30 minutos)
+# --------------------------------------------------------------------------
+def destacadas(lista: list, n: int = 12) -> list:
+    """La nota más relevante de cada medio y luego las más recientes, sin repetir."""
+    elegidas, vistos = [], set()
+    for n_ in lista:
+        if n_["id_fuente"] not in vistos:
+            vistos.add(n_["id_fuente"])
+            elegidas.append(n_)
+    for n_ in lista:
+        if len(elegidas) >= n:
+            break
+        if n_ not in elegidas:
+            elegidas.append(n_)
+    minimo = pd.Timestamp("1970-01-01", tz="UTC")
+    return sorted(elegidas[:n], key=lambda x: x["fecha"] if x["fecha"] is not None else minimo, reverse=True)
+
+
+@st.fragment(run_every="30m")
+def panel_noticias():
+    datos_n, aviso = noticias.noticias()
+    hora = datos_n["hora"].strftime("%H:%M") if datos_n else "—"
+    ui.html(f"<div class='noticias-cab'><div class='t'>Últimas noticias</div>"
+            f"<div class='n'>Economía y mercados<br>actualizado {hora} · se renueva cada 30 min</div></div>")
+    ui.mostrar_aviso(aviso)
+    if not datos_n:
+        return
+    todas = datos_n["noticias"]
+    grupos = {"Destacadas": destacadas(todas),
+              "Internacional": [n for n in todas if n["region"] == "Internacional"][:18],
+              "Chile": [n for n in todas if n["region"] == "Chile"][:18]}
+    for pestana, (nombre, lista) in zip(st.tabs(list(grupos)), grupos.items()):
+        with pestana:
+            with st.container(height=640, border=False):
+                if lista:
+                    ui.lista_noticias(lista, mostrar_region=nombre == "Destacadas")
+                else:
+                    st.caption(f"Sin notas recientes en las fuentes de {nombre.lower()} en este momento.")
+    filas = []
+    for f in noticias.FUENTES:
+        estado = datos_n["estado"].get(f["id"], "sin respuesta")
+        clase = "no" if estado in ("sin respuesta", "sin notas recientes") else "ok"
+        filas.append(f"<a href='{ui.h(f['url_seccion'])}' target='_blank' rel='noopener'>{ui.h(f['nombre'])}</a> "
+                     f"— {ui.h(f['seccion'])} <span class='{clase}'>● {ui.h(estado)}</span>")
+    ui.html("<div class='fuentes-lista'><b>Fuentes consultadas</b> (solo secciones de economía, finanzas y "
+            "mercados). Cada titular enlaza a la nota original:<br>" + "<br>".join(filas) + "</div>")
+
+
+with derecha:
+    panel_noticias()
+
+# --------------------------------------------------------------------------
+# Universo completo, tablas y buscador
+# --------------------------------------------------------------------------
 univ = universo.universo_inicio()
-with st.spinner(f"Descargando precios de {len(univ)} activos desde Yahoo Finance… "
-                "(la primera visita tarda alrededor de un minuto; luego queda guardado 30 minutos)"):
-    precios, aviso_precios = datos.precios_cierre(univ["Ticker"].tolist(), "6mo")
+with izquierda:
+    with st.spinner(f"Descargando precios de {len(univ)} activos desde Yahoo Finance… "
+                    "(la primera visita tarda alrededor de un minuto; luego queda guardado 30 minutos)"):
+        precios, aviso_precios = datos.precios_cierre(univ["Ticker"].tolist(), "6mo")
 rend = calcular_rendimientos(precios, univ) if not precios.empty else pd.DataFrame()
 
-izquierda, derecha = st.columns([2.2, 1], gap="large")
+if sube is None and not rend.empty:
+    fuente_mov = ("Calculado sobre el universo de la página (S&P 500, ETFs, materias primas y criptomonedas), "
+                  "porque el screener de Yahoo Finance no respondió.")
+    base = rend[["Ticker", "Nombre", "Precio (USD)", "Var. día"]].rename(
+        columns={"Precio (USD)": "Precio", "Var. día": "Var. %"})
+    sube = base.nlargest(15, "Var. %").reset_index(drop=True)
+    baja = base.nsmallest(15, "Var. %").reset_index(drop=True)
+    with lugar_franja:
+        armar_franja(sube, baja)
+
+with lugar_franja:
+    ui.html(f"<div class='nota-franja'>Arriba: las 3 mayores alzas y las 3 mayores caídas del día y el tipo de cambio "
+            f"dólar/peso chileno. Minigráficos de los últimos 3 meses. {ui.h(fuente_mov)}</div>")
 
 with izquierda:
     if rend.empty:
@@ -78,30 +174,13 @@ with izquierda:
 
         # ---------------- Hoy ----------------
         with tab_hoy:
-            sube, baja, aviso_scr = datos.movimientos_del_dia(15)
-            fuente = "Screener de Yahoo Finance: todo el mercado de EE.UU."
-            if sube is None or baja is None:
-                fuente = "Calculado sobre el universo de la página (el screener de Yahoo no respondió)."
-                base = rend[["Ticker", "Nombre", "Precio (USD)", "Var. día"]].rename(
-                    columns={"Precio (USD)": "Precio", "Var. día": "Var. %"})
-                sube = base.nlargest(15, "Var. %")
-                baja = base.nsmallest(15, "Var. %")
-            else:
-                sube = sube.assign(**{"Var. %": sube["Var. %"] / 100}).drop(columns="Volumen", errors="ignore")
-                baja = baja.assign(**{"Var. %": baja["Var. %"] / 100}).drop(columns="Volumen", errors="ignore")
-            cfg = {
-                "Precio": st.column_config.NumberColumn("Precio", format="dollar"),
-                "Var. %": st.column_config.NumberColumn("Variación", format="percent"),
-                "Volumen": st.column_config.NumberColumn("Volumen", format="compact"),
-            }
-            c1, c2 = st.columns(2)
+            c1, c2 = st.columns(2, gap="medium")
             with c1:
-                st.subheader("Mayores alzas del día")
-                st.dataframe(sube, hide_index=True, column_config=cfg, height=560)
+                ui.tabla_movimientos(sube, "Mayores alzas del día", 10)
             with c2:
-                st.subheader("Mayores caídas del día")
-                st.dataframe(baja, hide_index=True, column_config=cfg, height=560)
-            st.caption(fuente)
+                ui.tabla_movimientos(baja, "Mayores caídas del día", 10)
+            ui.html(f"<div class='fuente-tabla'>{ui.h(fuente_mov)} Haz clic en un ticker para ver su ficha "
+                    f"en Yahoo Finance.</div>")
 
         # ---------------- 90 días ----------------
         with tab_90:
@@ -173,17 +252,5 @@ with izquierda:
                         k3.metric("Variación 1 año", ui.pct(s.iloc[-1] / s.iloc[0] - 1))
                         st.plotly_chart(graficos.linea_precio(s.rename(elegido), f"{elegido} · último año"),
                                         theme=None, config=graficos.CONFIG)
-
-with derecha:
-    st.subheader("Últimas noticias")
-    lista, aviso_not = datos.noticias(14)
-    ui.mostrar_aviso(aviso_not)
-    for n in lista:
-        cuando = n["fecha"].strftime("%d-%m %H:%M") if n["fecha"] is not None else ""
-        st.markdown(
-            f"<div class='noticia'><a href='{html.escape(str(n['url'] or ''), quote=True)}' target='_blank' "
-            f"rel='noopener'>{html.escape(n['titulo'])}</a>"
-            f"<div class='meta'>{html.escape(str(n['fuente']))} · {cuando}</div></div>", unsafe_allow_html=True)
-    st.caption("Fuente: Yahoo Finance. Los enlaces abren el artículo original.")
 
 ui.aviso_legal()

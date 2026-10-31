@@ -12,21 +12,22 @@ from plotly.subplots import make_subplots
 
 from nucleo import tecnico
 
-# Paleta (validada para daltonismo): azul = alza, rojo = baja
-AZUL = "#2a78d6"
-AZUL_OSCURO = "#1c5cab"
-AZUL_CLARO = "#cde2fb"
-AZUL_MEDIO = "#9ec5f4"
-NARANJA = "#eb6834"
-AQUA = "#1baf7a"
-VIOLETA = "#6250d6"
-ROJO = "#e34948"
-TEXTO = "#0b0b0b"
-TEXTO_2 = "#52514e"
-GRILLA = "#ecebe7"
-FONDO = "#fcfcfb"
-GRIS = "#b9b8b2"
-FUENTE = "Inter, 'Source Sans Pro', system-ui, sans-serif"
+# Paleta institucional: azul = acento, verde = alza, rojo = baja
+AZUL = "#0b57d0"
+AZUL_OSCURO = "#0b1f3a"
+AZUL_CLARO = "#d6e4fb"
+AZUL_MEDIO = "#9dbcf0"
+VERDE = "#0a7f3f"
+NARANJA = "#d97706"
+AQUA = "#0f9d8a"
+VIOLETA = "#6d28d9"
+ROJO = "#c62828"
+TEXTO = "#111827"
+TEXTO_2 = "#5b6472"
+GRILLA = "#eceff3"
+FONDO = "#ffffff"
+GRIS = "#b6bcc6"
+FUENTE = "Inter, 'Helvetica Neue', Arial, sans-serif"
 
 CONFIG = {"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"], "locale": "es"}
 
@@ -35,11 +36,11 @@ def estilo(fig: go.Figure, alto: int = 380, titulo: str | None = None, leyenda: 
     fig.update_layout(
         height=alto, template="plotly_white", paper_bgcolor=FONDO, plot_bgcolor=FONDO,
         font=dict(family=FUENTE, size=13, color=TEXTO_2),
-        title=dict(text=titulo, font=dict(size=15, color=TEXTO), x=0, xanchor="left") if titulo else None,
+        title=dict(text=titulo, font=dict(size=15, color=TEXTO, weight=700), x=0, xanchor="left") if titulo else None,
         margin=dict(l=8, r=8, t=48 if titulo else 16, b=8), hovermode="x unified",
         showlegend=leyenda,
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1, font=dict(size=12)),
-        hoverlabel=dict(bgcolor="white", font=dict(family=FUENTE, color=TEXTO)),
+        hoverlabel=dict(bgcolor="white", bordercolor=GRILLA, font=dict(family=FUENTE, color=TEXTO)),
         separators=",.",
     )
     fig.update_xaxes(showgrid=False, linecolor=GRILLA, tickfont=dict(color=TEXTO_2))
@@ -57,7 +58,7 @@ def _pct(x: float) -> str:
 def barras_rendimiento(df: pd.DataFrame, col_valor: str, col_etiqueta: str = "Ticker",
                        titulo: str | None = None) -> go.Figure:
     d = df.sort_values(col_valor)
-    colores = [AZUL if v >= 0 else ROJO for v in d[col_valor]]
+    colores = [VERDE if v >= 0 else ROJO for v in d[col_valor]]
     fig = go.Figure(go.Bar(
         x=d[col_valor], y=d[col_etiqueta], orientation="h", marker=dict(color=colores, cornerradius=4),
         text=[_pct(v) for v in d[col_valor]], textposition="outside", cliponaxis=False,
@@ -98,7 +99,7 @@ def abanico_montecarlo(fechas_fut, bandas: np.ndarray, muestras: np.ndarray, v0:
     fig.add_trace(go.Scatter(x=fechas_fut, y=p75, line=dict(width=0), hoverinfo="skip", showlegend=False))
     fig.add_trace(go.Scatter(x=fechas_fut, y=p25, fill="tonexty", fillcolor="rgba(42,120,214,0.28)",
                              line=dict(width=0), name="50% de los escenarios", hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=fechas_fut, y=p95, mode="lines", line=dict(color=AZUL, width=1.5, dash="dot"),
+    fig.add_trace(go.Scatter(x=fechas_fut, y=p95, mode="lines", line=dict(color=VERDE, width=1.5, dash="dot"),
                              name="Mejor escenario (P95)", hovertemplate="Mejor: %{y:,.0f}<extra></extra>"))
     fig.add_trace(go.Scatter(x=fechas_fut, y=p50, mode="lines", line=dict(color=AZUL_OSCURO, width=2.5),
                              name="Escenario central (mediana)", hovertemplate="Central: %{y:,.0f}<extra></extra>"))
@@ -127,7 +128,7 @@ def histograma_final(finales: np.ndarray, v0: float, esc: dict) -> go.Figure:
     fig = go.Figure(go.Histogram(x=finales, nbinsx=70, marker=dict(color=AZUL_MEDIO, line=dict(color=FONDO, width=1)),
                                  hovertemplate="Entre %{x}<br>%{y} escenarios<extra></extra>", name="Escenarios"))
     for valor, nombre, color in ((esc["peor"], "Peor (P5)", ROJO), (esc["probable"], "Más probable", AZUL_OSCURO),
-                                 (esc["mejor"], "Mejor (P95)", AZUL), (v0, "Inversión inicial", TEXTO_2)):
+                                 (esc["mejor"], "Mejor (P95)", VERDE), (v0, "Inversión inicial", TEXTO_2)):
         fig.add_vline(x=valor, line=dict(color=color, width=2 if nombre != "Inversión inicial" else 1, dash="solid" if nombre == "Más probable" else "dot"),
                       annotation=dict(text=nombre, font=dict(size=11, color=TEXTO_2), textangle=-90, yanchor="top"),
                       annotation_position="top left" if nombre in ("Peor (P5)", "Inversión inicial") else "top right")
@@ -163,12 +164,31 @@ def regimenes_mercado(precio_mercado: pd.Series, probs: pd.DataFrame) -> go.Figu
     """Precio del mercado y probabilidad del régimen más bajista."""
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.65, 0.35], vertical_spacing=0.06)
     fig.add_trace(go.Scatter(x=precio_mercado.index, y=precio_mercado.values, mode="lines",
-                             line=dict(color=TEXTO, width=1.6), name="S&P 500 (SPY)"), row=1, col=1)
+                             line=dict(color=TEXTO, width=1.6), name="S&P 500 (^GSPC)"), row=1, col=1)
     fig.add_trace(go.Scatter(x=probs.index, y=probs.iloc[:, 0], mode="lines", fill="tozeroy",
                              line=dict(color=ROJO, width=1), fillcolor="rgba(227,73,72,0.25)",
                              name=f"Prob. régimen «{probs.columns[0]}»"), row=2, col=1)
     fig.update_yaxes(tickformat=".0%", range=[0, 1], row=2, col=1)
     return estilo(fig, alto=420, titulo="Regímenes ocultos de Markov del mercado")
+
+
+def bandas_sectoriales(expo: pd.DataFrame) -> go.Figure:
+    """Exposición sectorial de la cartera frente a la banda permitida alrededor del S&P 500."""
+    d = expo.sort_values("Peso en el S&P 500")
+    fig = go.Figure()
+    fig.add_trace(go.Bar(y=d["Sector"], x=d["Banda máxima"] - d["Banda mínima"], base=d["Banda mínima"],
+                         orientation="h", marker=dict(color=AZUL_CLARO), name="Banda permitida",
+                         hovertemplate="%{y}: banda %{base:.0%} a %{x:.0%}<extra></extra>"))
+    fig.add_trace(go.Scatter(y=d["Sector"], x=d["Peso en el S&P 500"], mode="markers", name="Peso en el S&P 500",
+                             marker=dict(symbol="line-ns", size=16, line=dict(width=2, color=TEXTO_2)),
+                             hovertemplate="S&P 500: %{x:.1%}<extra></extra>"))
+    fig.add_trace(go.Scatter(y=d["Sector"], x=d["Exposición de la cartera"], mode="markers", name="Cartera",
+                             marker=dict(size=10, color=AZUL_OSCURO),
+                             hovertemplate="Cartera: %{x:.1%}<extra></extra>"))
+    fig.update_xaxes(tickformat=".0%", showgrid=True, gridcolor=GRILLA, rangemode="tozero")
+    estilo(fig, alto=420, titulo="Exposición sectorial de la renta variable vs. banda del S&P 500")
+    fig.update_layout(hovermode="closest", barmode="overlay")
+    return fig
 
 
 def trayectoria_cartera(valor: pd.Series, costo: pd.Series, referencia: pd.Series | None = None) -> go.Figure:
@@ -185,7 +205,7 @@ def trayectoria_cartera(valor: pd.Series, costo: pd.Series, referencia: pd.Serie
 
 
 def mapa_correlacion(corr: pd.DataFrame) -> go.Figure:
-    escala = [[0, ROJO], [0.5, "#f0efec"], [1, AZUL]]
+    escala = [[0, ROJO], [0.5, "#f4f6f9"], [1, AZUL]]
     fig = go.Figure(go.Heatmap(z=corr.values, x=corr.columns, y=corr.index, zmin=-1, zmax=1, zmid=0,
                                colorscale=escala, text=np.round(corr.values, 2), texttemplate="%{text}",
                                textfont=dict(size=11), hovertemplate="%{y} / %{x}: %{z:.2f}<extra></extra>",
@@ -206,7 +226,7 @@ def grafico_tecnico(ohlc: pd.DataFrame, nombre: str, compra: pd.Timestamp | None
     r = tecnico.rsi(c)
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.6, 0.2, 0.2], vertical_spacing=0.035)
     fig.add_trace(go.Candlestick(x=ohlc.index, open=ohlc["Open"], high=ohlc["High"], low=ohlc["Low"], close=c,
-                                 increasing=dict(line=dict(color=AZUL, width=1), fillcolor=AZUL),
+                                 increasing=dict(line=dict(color=VERDE, width=1), fillcolor=VERDE),
                                  decreasing=dict(line=dict(color=ROJO, width=1), fillcolor=ROJO),
                                  name="Precio", showlegend=False), row=1, col=1)
     fig.add_trace(go.Scatter(x=bb.index, y=bb["Superior"], line=dict(color=GRIS, width=1), name="Bollinger",
@@ -218,7 +238,7 @@ def grafico_tecnico(ohlc: pd.DataFrame, nombre: str, compra: pd.Timestamp | None
     fig.add_trace(go.Scatter(x=r.index, y=r, line=dict(color=AZUL_OSCURO, width=1.4), name="RSI 14"), row=2, col=1)
     for nivel in (30, 70):
         fig.add_hline(y=nivel, line=dict(color=TEXTO_2, width=0.8, dash="dot"), row=2, col=1)
-    fig.add_trace(go.Bar(x=mc.index, y=mc["Histograma"], marker_color=[AZUL if v >= 0 else ROJO for v in mc["Histograma"].fillna(0)],
+    fig.add_trace(go.Bar(x=mc.index, y=mc["Histograma"], marker_color=[VERDE if v >= 0 else ROJO for v in mc["Histograma"].fillna(0)],
                          name="Histograma MACD", showlegend=False), row=3, col=1)
     fig.add_trace(go.Scatter(x=mc.index, y=mc["MACD"], line=dict(color=TEXTO, width=1.2), name="MACD"), row=3, col=1)
     fig.add_trace(go.Scatter(x=mc.index, y=mc["Señal"], line=dict(color=NARANJA, width=1.2), name="Señal MACD"), row=3, col=1)
@@ -238,8 +258,17 @@ def grafico_tecnico(ohlc: pd.DataFrame, nombre: str, compra: pd.Timestamp | None
 _TV_ESPECIALES = {
     "GC=F": "COMEX:GC1!", "SI=F": "COMEX:SI1!", "HG=F": "COMEX:HG1!", "CL=F": "NYMEX:CL1!", "NG=F": "NYMEX:NG1!",
     "^GSPC": "SP:SPX", "^IXIC": "NASDAQ:IXIC", "^DJI": "DJ:DJI", "^RUT": "TVC:RUT", "^VIX": "TVC:VIX",
-    "CLP=X": "FX_IDC:USDCLP", "SPY": "AMEX:SPY", "GLD": "AMEX:GLD",
+    "CLP=X": "FX_IDC:USDCLP", "SPY": "AMEX:SPY", "GLD": "AMEX:GLD", "BRK-B": "NYSE:BRK.B",
 }
+
+# Indicadores que el usuario puede activar en el gráfico (identificadores del widget)
+INDICADORES_TV = {
+    "Media móvil simple": "MASimple@tv-basicstudies",
+    "Bandas de Bollinger": "BB@tv-basicstudies",
+    "RSI": "RSI@tv-basicstudies",
+    "MACD": "MACD@tv-basicstudies",
+}
+INTERVALOS_TV = {"Diario": ("D", "12M"), "Semanal": ("W", "60M"), "1 hora": ("60", "1M"), "15 minutos": ("15", "5D")}
 
 
 def simbolo_tradingview(ticker: str) -> str:
@@ -255,19 +284,91 @@ def simbolo_tradingview(ticker: str) -> str:
     return t.replace("-", ".").lstrip("^")
 
 
-def html_tradingview(simbolo: str, alto: int = 620) -> str:
-    simbolo = re.sub(r"[^A-Za-z0-9:._!^=\-]", "", str(simbolo))[:40] or "SPY"
+def _limpiar_simbolo(simbolo: str) -> str:
+    return re.sub(r"[^A-Za-z0-9:._!^=\-]", "", str(simbolo))[:40] or "SPY"
+
+
+def url_tradingview(simbolo: str) -> str:
+    from urllib.parse import quote
+    return "https://es.tradingview.com/chart/?symbol=" + quote(_limpiar_simbolo(simbolo), safe="")
+
+
+def html_tradingview(simbolo: str, intervalo: str = "Diario", indicadores: list | None = None) -> str:
+    """Página completa con el widget avanzado de TradingView.
+
+    - Ocupa el 100% del alto del marco (antes quedaba aplastado).
+    - Botón de pantalla completa (API Fullscreen del navegador).
+    - Enlace para abrir el mismo símbolo en TradingView.
+    """
+    simbolo = _limpiar_simbolo(simbolo)
+    codigo, rango = INTERVALOS_TV.get(intervalo, INTERVALOS_TV["Diario"])
     config = {
-        "autosize": True, "symbol": simbolo, "interval": "D", "timezone": "America/Santiago",
-        "theme": "light", "style": "1", "locale": "es", "allow_symbol_change": True,
-        "hide_side_toolbar": False, "withdateranges": True, "save_image": True,
-        "studies": ["RSI@tv-basicstudies", "MACD@tv-basicstudies"],
+        "autosize": True, "symbol": simbolo, "interval": codigo, "range": rango,
+        "timezone": "America/Santiago", "theme": "light", "style": "1", "locale": "es",
+        "backgroundColor": "#ffffff", "gridColor": "rgba(17, 24, 39, 0.06)",
+        "allow_symbol_change": True, "hide_side_toolbar": False, "hide_top_toolbar": False,
+        "withdateranges": True, "save_image": True, "details": False, "calendar": False,
+        "hide_volume": False, "studies": [INDICADORES_TV[i] for i in (indicadores or []) if i in INDICADORES_TV],
         "support_host": "https://www.tradingview.com",
     }
-    return f"""
-<div class="tradingview-widget-container" style="height:{alto}px;width:100%">
-  <div class="tradingview-widget-container__widget" style="height:{alto}px;width:100%"></div>
-  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
-  {json.dumps(config)}
-  </script>
-</div>"""
+    enlace = url_tradingview(simbolo)
+    return f"""<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<style>
+  html, body {{ margin: 0; padding: 0; height: 100%; background: #ffffff;
+               font-family: Inter, 'Helvetica Neue', Arial, sans-serif; }}
+  #envoltorio {{ display: flex; flex-direction: column; height: 100vh; width: 100%; background: #ffffff;
+                 box-sizing: border-box; border: 1px solid #e3e6eb; border-radius: 8px; overflow: hidden; }}
+  #envoltorio:fullscreen {{ border-radius: 0; border: 0; }}
+  .barra {{ display: flex; align-items: center; justify-content: space-between; gap: 8px;
+           padding: 8px 12px; border-bottom: 1px solid #e3e6eb; background: #f8fafc; }}
+  .barra .titulo {{ font-size: 13px; color: #5b6472; }}
+  .barra .titulo b {{ color: #111827; font-size: 14px; }}
+  .acciones {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+  .boton {{ font: 600 13px Inter, 'Helvetica Neue', Arial, sans-serif; border: 1px solid #cfd5dd; background: #ffffff;
+           color: #111827; border-radius: 6px; padding: 6px 12px; cursor: pointer; text-decoration: none;
+           display: inline-flex; align-items: center; gap: 6px; line-height: 1.2; }}
+  .boton:hover {{ border-color: #0b57d0; color: #0b57d0; }}
+  .boton.primario {{ background: #0b57d0; border-color: #0b57d0; color: #ffffff; }}
+  .boton.primario:hover {{ background: #0a49ad; color: #ffffff; }}
+  .tradingview-widget-container {{ flex: 1 1 auto; min-height: 0; width: 100%; }}
+  .tradingview-widget-container__widget {{ height: 100%; width: 100%; }}
+</style></head>
+<body>
+<div id="envoltorio">
+  <div class="barra">
+    <span class="titulo"><b>{simbolo}</b> · gráfico interactivo con herramientas de dibujo</span>
+    <span class="acciones">
+      <button class="boton primario" id="pantalla" type="button">&#x26F6; Pantalla completa</button>
+      <a class="boton" href="{enlace}" target="_blank" rel="noopener">Abrir en TradingView &#x2197;</a>
+    </span>
+  </div>
+  <div class="tradingview-widget-container">
+    <div class="tradingview-widget-container__widget"></div>
+    <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+    {json.dumps(config)}
+    </script>
+  </div>
+</div>
+<script>
+  (function () {{
+    var caja = document.getElementById('envoltorio');
+    var boton = document.getElementById('pantalla');
+    boton.addEventListener('click', function () {{
+      var activo = document.fullscreenElement || document.webkitFullscreenElement;
+      if (!activo) {{
+        var pedir = caja.requestFullscreen || caja.webkitRequestFullscreen;
+        if (pedir) {{ pedir.call(caja); }} else {{ window.open('{enlace}', '_blank'); }}
+      }} else {{
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      }}
+    }});
+    function actualizar() {{
+      var activo = document.fullscreenElement || document.webkitFullscreenElement;
+      boton.innerHTML = activo ? '&#x2715; Salir de pantalla completa' : '&#x26F6; Pantalla completa';
+    }}
+    document.addEventListener('fullscreenchange', actualizar);
+    document.addEventListener('webkitfullscreenchange', actualizar);
+  }})();
+</script>
+</body></html>"""

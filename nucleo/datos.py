@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import time
 import zlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -85,6 +85,10 @@ def _dias_periodo(periodo: str | None, inicio) -> int:
 
 def _serie_demo(ticker: str, dias: int) -> pd.DataFrame:
     rng = np.random.default_rng(zlib.crc32(ticker.encode()))
+    if ticker == "^IRX":  # tasa en % anual, no un precio
+        fechas = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=max(5, int(dias * 5 / 7)))
+        tasa = np.clip(4 + np.cumsum(rng.normal(0, 0.02, len(fechas))), 0.5, 6)
+        return pd.DataFrame({"Open": tasa, "High": tasa, "Low": tasa, "Close": tasa, "Volume": 0}, index=fechas)
     cripto = ticker.endswith("-USD")
     fechas = pd.date_range(end=pd.Timestamp.today().normalize(), periods=dias, freq="D")
     if not cripto:
@@ -224,75 +228,6 @@ def movimientos_del_dia(cantidad: int = 15):
     sube, aviso1 = _con_respaldo(("scr", "day_gainers"), lambda: _screener("day_gainers", cantidad))
     baja, aviso2 = _con_respaldo(("scr", "day_losers"), lambda: _screener("day_losers", cantidad))
     return sube, baja, aviso1 or aviso2
-
-
-# ----------------------------------------------------------------------------
-# Noticias
-# ----------------------------------------------------------------------------
-def _normalizar_noticia(item: dict) -> dict | None:
-    c = item.get("content", item) or {}
-    titulo = c.get("title")
-    if not titulo:
-        return None
-    url = ((c.get("canonicalUrl") or {}).get("url") or (c.get("clickThroughUrl") or {}).get("url")
-           or c.get("link") or item.get("link"))
-    fuente = (c.get("provider") or {}).get("displayName") or c.get("publisher") or "Yahoo Finance"
-    fecha = c.get("pubDate") or c.get("displayTime")
-    if fecha is None and c.get("providerPublishTime"):
-        fecha = datetime.fromtimestamp(c["providerPublishTime"], tz=timezone.utc).isoformat()
-    try:
-        fecha = pd.Timestamp(fecha).tz_convert(ZONA_CHILE) if fecha else None
-    except Exception:
-        try:
-            fecha = pd.Timestamp(fecha).tz_localize("UTC").tz_convert(ZONA_CHILE)
-        except Exception:
-            fecha = None
-    resumen = c.get("summary") or c.get("description") or ""
-    return {"titulo": titulo, "url": url, "fuente": fuente, "fecha": fecha, "resumen": resumen}
-
-
-@st.cache_data(ttl=TTL_NOTICIAS, show_spinner=False)
-def _descargar_noticias(cantidad: int) -> list:
-    if MODO_DEMO:
-        ahora = pd.Timestamp.now(tz=ZONA_CHILE)
-        return [{"titulo": f"Titular de demostración número {i + 1}", "url": "https://finance.yahoo.com",
-                 "fuente": "Demo", "fecha": ahora - pd.Timedelta(minutes=37 * i), "resumen": ""}
-                for i in range(cantidad)]
-    noticias = []
-    for simbolo in ("^GSPC", "SPY", "QQQ", "BTC-USD"):
-        try:
-            for item in yf.Ticker(simbolo).get_news(count=10):
-                n = _normalizar_noticia(item)
-                if n:
-                    noticias.append(n)
-        except Exception:
-            continue
-    if len(noticias) < 5:  # respaldo: RSS público de Yahoo Finance
-        try:
-            import feedparser
-            feed = feedparser.parse("https://finance.yahoo.com/news/rssindex")
-            for e in feed.entries[:cantidad]:
-                fecha = pd.Timestamp(datetime(*e.published_parsed[:6]), tz="UTC").tz_convert(ZONA_CHILE) \
-                    if getattr(e, "published_parsed", None) else None
-                noticias.append({"titulo": e.title, "url": e.link, "fuente": "Yahoo Finance",
-                                 "fecha": fecha, "resumen": ""})
-        except Exception:
-            pass
-    vistos, unicas = set(), []
-    for n in noticias:
-        if n["titulo"] not in vistos:
-            vistos.add(n["titulo"])
-            unicas.append(n)
-    minimo = pd.Timestamp("1970-01-01", tz=ZONA_CHILE)
-    unicas.sort(key=lambda n: n["fecha"] if n["fecha"] is not None else minimo, reverse=True)
-    if not unicas:
-        raise ValueError("sin noticias")
-    return unicas[:cantidad]
-
-
-def noticias(cantidad: int = 12):
-    datos, aviso = _con_respaldo(("noticias", cantidad), lambda: _descargar_noticias(cantidad))
-    return datos or [], aviso
 
 
 # ----------------------------------------------------------------------------

@@ -10,23 +10,35 @@ from nucleo import datos, graficos, modelo, montecarlo, tecnico, ui, universo
 
 ui.preparar_pagina()
 ui.encabezado("Mi cartera",
-              "Ingresa lo que ya tienes invertido: acciones, ETFs (por ejemplo del S&P 500), oro, criptomonedas y más. "
-              "Analizamos su trayectoria desde tu compra, proyectamos escenarios y hacemos un estudio técnico.")
+              "Registra lo que ya compraste —acciones, ETFs, oro, bonos o criptomonedas— y analizamos su rentabilidad "
+              "real desde la compra, la comparamos con el S&P 500, proyectamos escenarios y hacemos un estudio técnico.",
+              "Seguimiento de inversiones · uso académico")
 
 HORIZONTES = {"3 meses": 63, "6 meses": 126, "1 año": 252, "2 años": 504, "3 años": 756, "5 años": 1260}
-COLUMNAS = ["Activo", "Cantidad", "Fecha de compra", "Precio de compra (USD)"]
+COL_ACTIVO, COL_FECHA, COL_CANT, COL_MONTO, COL_PRECIO = (
+    "Activo", "Fecha de compra", "Cantidad (unidades)", "Monto invertido (USD)", "Precio por unidad al comprar")
+COLUMNAS = [COL_ACTIVO, COL_FECHA, COL_CANT, COL_MONTO, COL_PRECIO]
+NOMBRES_ANTIGUOS = {"Cantidad": COL_CANT, "Precio de compra (USD)": COL_PRECIO, "Precio de compra": COL_PRECIO}
+DIVISA = "CLP=X"
 EJEMPLO = pd.DataFrame({
-    "Activo": ["VOO", "AAPL", "GLD", "BTC-USD"],
-    "Cantidad": [10.0, 15.0, 8.0, 0.05],
-    "Fecha de compra": [date.today() - timedelta(days=d) for d in (700, 420, 300, 180)],
-    "Precio de compra (USD)": [np.nan, np.nan, np.nan, np.nan],
+    COL_ACTIVO: ["VOO", "AAPL", "GLD", "BTC-USD"],
+    COL_FECHA: [date.today() - timedelta(days=d) for d in (700, 420, 300, 220)],
+    COL_CANT: [10.0, 15.0, np.nan, 0.003],
+    COL_MONTO: [np.nan, np.nan, 2000.0, np.nan],
+    COL_PRECIO: [np.nan, np.nan, np.nan, np.nan],
 })
 
 
 def tabla_vacia() -> pd.DataFrame:
-    return pd.DataFrame({"Activo": pd.Series(dtype="str"), "Cantidad": pd.Series(dtype="float"),
-                         "Fecha de compra": pd.Series(dtype="object"),
-                         "Precio de compra (USD)": pd.Series(dtype="float")})
+    return pd.DataFrame({COL_ACTIVO: pd.Series(dtype="str"), COL_FECHA: pd.Series(dtype="object"),
+                         COL_CANT: pd.Series(dtype="float"), COL_MONTO: pd.Series(dtype="float"),
+                         COL_PRECIO: pd.Series(dtype="float")})
+
+
+def reiniciar_editor(df: pd.DataFrame):
+    st.session_state["posiciones_base"] = df.reindex(columns=COLUMNAS)
+    st.session_state["version_editor"] += 1
+    st.session_state.pop("analisis_cartera", None)
 
 
 if "posiciones_base" not in st.session_state:
@@ -34,60 +46,94 @@ if "posiciones_base" not in st.session_state:
     st.session_state["version_editor"] = 0
 
 # --------------------------------------------------------------------------
-# Ayuda con tickers
+# 1. Agregar una inversión (formulario guiado)
 # --------------------------------------------------------------------------
-with st.expander("¿Cómo escribo cada activo? (tickers de Yahoo Finance)"):
-    st.markdown("""
-| Si invertiste en… | Escribe | Si invertiste en… | Escribe |
-|---|---|---|---|
-| Fondo/ETF del S&P 500 | `VOO`, `SPY` o `IVV` | Bitcoin | `BTC-USD` |
-| Nasdaq-100 | `QQQ` | Ethereum | `ETH-USD` |
-| Oro (ETF) | `GLD` o `IAU` | Oro (futuro) | `GC=F` |
-| Bonos del Tesoro de EE.UU. | `TLT`, `IEF`, `SHY` | Plata | `SLV` |
-| Acción de EE.UU. | su ticker: `AAPL`, `MSFT`, `TSLA` | Acción chilena | ticker + `.SN`: `SQM-B.SN`, `FALABELLA.SN` |
-""")
-    buscar = st.text_input("¿No sabes el ticker? Búscalo por nombre", placeholder="Ej.: Tesla, oro, Banco de Chile")
-    if buscar:
-        st.dataframe(datos.buscar_ticker(buscar.strip()), hide_index=True)
-    st.caption("Los precios de acciones chilenas (.SN) vienen en pesos chilenos; el resto, en dólares.")
+ui.seccion("1. Agrega tus compras", "Una fila por cada compra. Si compraste el mismo activo en distintas fechas, "
+                                    "agrégalo varias veces.")
+with st.form("agregar_inversion", clear_on_submit=True, border=True):
+    c1, c2 = st.columns([1.5, 1])
+    activo_txt = c1.selectbox(
+        "Activo", list(universo.POPULARES), index=None, accept_new_options=True,
+        placeholder="Busca o escribe: Bitcoin, Apple, VOO, SQM-B.SN…",
+        help="Elige de la lista o escribe el ticker de Yahoo Finance. Bitcoin es BTC-USD (no «BTC», que en Yahoo es "
+             "un fondo cotizado); las acciones chilenas terminan en .SN.")
+    fecha_txt = c2.date_input("Fecha de compra", value=None, min_value=date(1990, 1, 1), max_value=date.today(),
+                              format="DD/MM/YYYY")
+    d1, d2, d3 = st.columns(3)
+    cantidad_in = d1.number_input(
+        "Cantidad comprada (unidades del activo)", min_value=0.0, value=None, step=0.001, format="%.8f",
+        placeholder="Ej.: 0.003  (BTC)  ·  10  (acciones)",
+        help="Cuántas acciones, cuotas o monedas compraste. Ejemplo: si compraste 0,003 bitcoin escribe 0.003.")
+    monto_in = d2.number_input(
+        "Monto invertido (USD)", min_value=0.0, value=None, step=10.0, format="%.2f",
+        placeholder="Ej.: 191.92",
+        help="Total de dólares que pagaste en esa compra. Si lo indicas sin la cantidad, la calculamos con el precio.")
+    precio_in = d3.number_input(
+        "Precio por unidad al comprar (opcional)", min_value=0.0, value=None, step=1.0, format="%.4f",
+        placeholder="Ej.: 63974  (precio de 1 BTC)",
+        help="Precio de UNA unidad del activo en tu compra (en USD; en pesos chilenos para acciones .SN). "
+             "Si lo dejas vacío usamos el cierre de ese día según Yahoo Finance.")
+    st.caption("Completa la **cantidad o el monto** (o ambos). Escribe los números sin separador de miles y con "
+               "**punto decimal**: 63974 y 0.003, no 63.974 ni 0,003. Ejemplo: 0.003 BTC-USD comprados el 24/03 a "
+               "63974 por bitcoin = US$ 191,92 invertidos.")
+    agregar = st.form_submit_button("Agregar a mi cartera", type="primary", icon=":material/add:")
+
+if agregar:
+    faltan = []
+    if not activo_txt:
+        faltan.append("el activo")
+    if fecha_txt is None:
+        faltan.append("la fecha de compra")
+    if not (cantidad_in and cantidad_in > 0) and not (monto_in and monto_in > 0):
+        faltan.append("la cantidad o el monto invertido")
+    if faltan:
+        st.error("Falta " + ", ".join(faltan) + ".")
+    else:
+        ticker, nota = universo.normalizar_ticker(activo_txt)
+        fila = pd.DataFrame([{COL_ACTIVO: ticker, COL_FECHA: fecha_txt,
+                              COL_CANT: cantidad_in if cantidad_in else np.nan,
+                              COL_MONTO: monto_in if monto_in else np.nan,
+                              COL_PRECIO: precio_in if precio_in else np.nan}])
+        base = st.session_state["posiciones_base"]
+        reiniciar_editor(pd.concat([base, fila], ignore_index=True) if len(base) else fila)
+        st.toast(f"Agregado: {ticker}" + (f" · {nota}" if nota else ""), icon=":material/check:")
 
 # --------------------------------------------------------------------------
-# Ingreso de posiciones
+# 2. Revisar / editar la tabla
 # --------------------------------------------------------------------------
+ui.seccion("2. Revisa tu cartera", "Puedes corregir cualquier celda, borrar filas (selecciónalas y presiona la "
+                                   "papelera) o guardar la tabla en un archivo para cargarla otro día.")
 b1, b2, b3 = st.columns([1, 1, 2])
 if b1.button("Cargar ejemplo", width="stretch"):
-    st.session_state["posiciones_base"] = EJEMPLO.copy()
-    st.session_state["version_editor"] += 1
-    st.session_state.pop("analisis_cartera", None)
+    reiniciar_editor(EJEMPLO.copy())
 if b2.button("Limpiar tabla", width="stretch"):
-    st.session_state["posiciones_base"] = tabla_vacia()
-    st.session_state["version_editor"] += 1
-    st.session_state.pop("analisis_cartera", None)
+    reiniciar_editor(tabla_vacia())
 archivo = b3.file_uploader("Cargar cartera guardada (CSV)", type="csv", label_visibility="collapsed")
 if archivo is not None and st.session_state.get("ultimo_csv") != archivo.file_id:
     try:
-        cargado = pd.read_csv(archivo)
+        cargado = pd.read_csv(archivo).rename(columns=NOMBRES_ANTIGUOS)
         cargado = cargado[[c for c in COLUMNAS if c in cargado.columns]]
-        cargado["Fecha de compra"] = pd.to_datetime(cargado["Fecha de compra"], dayfirst=False, errors="coerce").dt.date
-        st.session_state["posiciones_base"] = cargado.reindex(columns=COLUMNAS)
-        st.session_state["version_editor"] += 1
+        cargado[COL_FECHA] = pd.to_datetime(cargado[COL_FECHA], errors="coerce").dt.date
+        reiniciar_editor(cargado)
         st.session_state["ultimo_csv"] = archivo.file_id
     except Exception as e:
         st.error(f"No se pudo leer el archivo: {e}")
 
-st.markdown("**Tus inversiones** · agrega una fila por cada compra (puedes repetir un activo si compraste en distintas fechas).")
 editado = st.data_editor(
     st.session_state["posiciones_base"], num_rows="dynamic", hide_index=True, width="stretch",
     key=f"editor_{st.session_state['version_editor']}",
     column_config={
-        "Activo": st.column_config.TextColumn("Activo (ticker)", required=True, help="Ej.: VOO, AAPL, BTC-USD, GLD"),
-        "Cantidad": st.column_config.NumberColumn("Cantidad", min_value=0.0, format="%.6f",
-                                                  help="Número de acciones, cuotas o monedas (admite decimales)"),
-        "Fecha de compra": st.column_config.DateColumn("Fecha de compra", min_value=date(1990, 1, 1),
-                                                       max_value=date.today(), format="DD-MM-YYYY"),
-        "Precio de compra (USD)": st.column_config.NumberColumn(
-            "Precio de compra (opcional)", min_value=0.0, format="%.4f",
-            help="Si lo dejas vacío se usa el precio de cierre de ese día según Yahoo Finance"),
+        COL_ACTIVO: st.column_config.TextColumn("Activo (ticker)", required=True,
+                                                help="Ticker de Yahoo Finance: VOO, AAPL, BTC-USD, GLD, SQM-B.SN"),
+        COL_FECHA: st.column_config.DateColumn("Fecha de compra", min_value=date(1990, 1, 1),
+                                               max_value=date.today(), format="DD-MM-YYYY"),
+        COL_CANT: st.column_config.NumberColumn("Cantidad (unidades)", min_value=0.0, format="%.8f",
+                                                help="Número de acciones, cuotas o monedas. Ej.: 0.003 bitcoin"),
+        COL_MONTO: st.column_config.NumberColumn("Monto invertido (USD)", min_value=0.0, format="%.2f",
+                                                 help="Dólares pagados en esa compra"),
+        COL_PRECIO: st.column_config.NumberColumn(
+            "Precio por unidad", min_value=0.0, format="%.4f",
+            help="Precio de 1 unidad al comprar (USD; CLP para acciones .SN). Vacío = cierre de ese día en Yahoo"),
     })
 
 c1, c2, c3 = st.columns([1, 1, 1])
@@ -96,91 +142,165 @@ modo_mc = c2.radio("Modelo de simulación", ["Regímenes de Markov", "Clásico (
 prudente = c3.toggle("Moderar la tendencia histórica", value=False,
                      help="Mezcla el rendimiento observado desde tu compra con un 7% anual de largo plazo. "
                           "Útil si compraste hace poco o en una racha excepcional.")
-st.download_button("Guardar mi cartera (CSV)", editado.to_csv(index=False).encode("utf-8"), "mi_cartera.csv", "text/csv")
-analizar = st.button("Analizar mi cartera", type="primary", width="stretch")
+g1, g2 = st.columns([1, 3])
+g1.download_button("Guardar mi cartera (CSV)", editado.to_csv(index=False).encode("utf-8"), "mi_cartera.csv",
+                   "text/csv", width="stretch")
+analizar = g2.button("Analizar mi cartera", type="primary", width="stretch")
 
 
 # --------------------------------------------------------------------------
 # Validación
 # --------------------------------------------------------------------------
 def validar(df: pd.DataFrame):
-    errores = []
+    errores, notas = [], []
     d = df.copy()
-    d["Activo"] = d["Activo"].astype(str).str.strip().str.upper().replace({"NAN": "", "NONE": ""})
-    d = d[d["Activo"] != ""]
+    d[COL_ACTIVO] = d[COL_ACTIVO].astype(str).str.strip().replace({"nan": "", "None": "", "NaN": ""})
+    d = d[d[COL_ACTIVO] != ""]
     if d.empty:
-        return None, ["Agrega al menos una inversión."]
-    d["Cantidad"] = pd.to_numeric(d["Cantidad"], errors="coerce")
-    d["Fecha de compra"] = pd.to_datetime(d["Fecha de compra"], errors="coerce")
-    d["Precio de compra (USD)"] = pd.to_numeric(d["Precio de compra (USD)"], errors="coerce")
-    malos = d[(d["Cantidad"].isna()) | (d["Cantidad"] <= 0)]
-    if len(malos):
-        errores.append("Revisa la cantidad de: " + ", ".join(malos["Activo"]))
-    sin_fecha = d[d["Fecha de compra"].isna()]
+        return None, ["Agrega al menos una inversión."], []
+    normalizados = [universo.normalizar_ticker(t) for t in d[COL_ACTIVO]]
+    d[COL_ACTIVO] = [t for t, _ in normalizados]
+    notas += [n for _, n in normalizados if n]
+    for c in (COL_CANT, COL_MONTO, COL_PRECIO):
+        d[c] = pd.to_numeric(d[c], errors="coerce").where(lambda x: x > 0)
+    d[COL_FECHA] = pd.to_datetime(d[COL_FECHA], errors="coerce")
+    sin_dato = d[d[COL_CANT].isna() & d[COL_MONTO].isna()]
+    if len(sin_dato):
+        errores.append("Indica la cantidad o el monto invertido de: " + ", ".join(sin_dato[COL_ACTIVO]))
+    sin_fecha = d[d[COL_FECHA].isna()]
     if len(sin_fecha):
-        errores.append("Falta la fecha de compra de: " + ", ".join(sin_fecha["Activo"]))
-    futuras = d[d["Fecha de compra"] > pd.Timestamp.today().normalize()]
+        errores.append("Falta la fecha de compra de: " + ", ".join(sin_fecha[COL_ACTIVO]))
+    futuras = d[d[COL_FECHA] > pd.Timestamp.today().normalize()]
     if len(futuras):
-        errores.append("La fecha de compra no puede ser futura: " + ", ".join(futuras["Activo"]))
+        errores.append("La fecha de compra no puede ser futura: " + ", ".join(futuras[COL_ACTIVO]))
     if errores:
-        return None, errores
-    return d.reset_index(drop=True), []
+        return None, errores, notas
+    return d.reset_index(drop=True), [], list(dict.fromkeys(notas))
 
 
 if analizar:
-    posiciones, errores = validar(editado)
+    posiciones, errores, notas_val = validar(editado)
     if errores:
         for e in errores:
             st.error(e)
         st.session_state.pop("analisis_cartera", None)
     else:
         st.session_state["analisis_cartera"] = {"posiciones": posiciones, "horizonte": horizonte,
-                                                "modo": modo_mc, "prudente": prudente}
+                                                "modo": modo_mc, "prudente": prudente, "notas": notas_val}
 
 estado = st.session_state.get("analisis_cartera")
 if not estado:
-    st.info("Ingresa tus inversiones (o usa **Cargar ejemplo**) y presiona **Analizar mi cartera**.", icon="👆")
+    st.info("Agrega tus compras (o usa **Cargar ejemplo**) y presiona **Analizar mi cartera**.",
+            icon=":material/arrow_upward:")
     ui.aviso_legal()
     st.stop()
 
 pos: pd.DataFrame = estado["posiciones"]
-tickers = list(dict.fromkeys(pos["Activo"]))
-inicio = min(pos["Fecha de compra"].min(), pd.Timestamp.today() - pd.Timedelta(days=760)) - pd.Timedelta(days=10)
+tickers = list(dict.fromkeys(pos[COL_ACTIVO]))
+chilenos = [t for t in tickers if t.endswith(".SN")]
+inicio = min(pos[COL_FECHA].min(), pd.Timestamp.today() - pd.Timedelta(days=760)) - pd.Timedelta(days=10)
 
 with st.spinner("Descargando la historia de tus activos desde Yahoo Finance…"):
-    precios, aviso = datos.precios_cierre(tickers + [universo.PROXY_MERCADO], inicio=inicio.normalize())
+    extra = [universo.PROXY_MERCADO] + ([DIVISA] if chilenos else [])
+    precios, aviso = datos.precios_cierre(tickers + extra, inicio=inicio.normalize())
 if precios.empty:
     st.error(aviso or "No se pudieron descargar los precios. Intenta nuevamente en unos minutos.")
     st.stop()
 faltan = [t for t in tickers if t not in precios.columns]
 if faltan:
-    st.warning("Yahoo Finance no tiene datos para: " + ", ".join(faltan) + ". Revisa el ticker; esas filas se omiten.")
-    pos = pos[~pos["Activo"].isin(faltan)].reset_index(drop=True)
+    st.warning("Yahoo Finance no tiene datos para: " + ", ".join(faltan) + ". Revisa el ticker (usa el buscador de "
+               "la sección 1); esas filas se omiten.")
+    pos = pos[~pos[COL_ACTIVO].isin(faltan)].reset_index(drop=True)
     tickers = [t for t in tickers if t not in faltan]
 if pos.empty:
     st.stop()
 
 precios = precios.sort_index().ffill()
+nativos = precios.copy()  # precios en la moneda original de cada activo
+clp = precios[DIVISA] if DIVISA in precios.columns else None
+for t in chilenos:
+    if clp is not None and t in precios.columns:
+        precios[t] = nativos[t] / clp   # acciones chilenas convertidas a USD con el dólar de cada día
+
 
 # --------------------------------------------------------------------------
-# Posiciones y rentabilidad
+# Interpretación de cada compra (cantidad, monto y precio)
 # --------------------------------------------------------------------------
-filas = []
+def revisar_precio(p: float, referencia: float, moneda: str) -> tuple[float, str]:
+    """Detecta el error típico de escribir 63.974 (punto de miles) en vez de 63974."""
+    if not (referencia and np.isfinite(referencia)) or not p:
+        return p, ""
+    r = p / referencia
+    if 0.5 <= r <= 2:
+        return p, ""
+    for factor in (1000, 1_000_000):
+        if 0.5 <= r * factor <= 2:
+            return p * factor, (f"precio {ui.num(p, 3)} interpretado como {ui.num(p * factor, 2)} {moneda} "
+                                f"(separador de miles)")
+    return p, (f"el precio ingresado difiere {ui.pct(r - 1, 0)} del cierre de mercado de ese día "
+               f"({ui.num(referencia, 2)} {moneda}); revísalo")
+
+
+filas, observaciones = [], []
 for _, f in pos.iterrows():
-    s = precios[f["Activo"]].dropna()
-    desde = s[s.index >= f["Fecha de compra"]]
-    precio_fecha = float(desde.iloc[0]) if len(desde) else float(s.iloc[-1])
-    precio_compra = float(f["Precio de compra (USD)"]) if pd.notna(f["Precio de compra (USD)"]) else precio_fecha
-    actual = float(s.iloc[-1])
+    t = f[COL_ACTIVO]
+    moneda = "CLP" if t.endswith(".SN") else "USD"
+    s_nat = nativos[t].dropna()
+    desde = s_nat[s_nat.index >= f[COL_FECHA]]
+    ref = float(desde.iloc[0]) if len(desde) else float(s_nat.iloc[-1])
+    fecha_ref = (desde.index[0] if len(desde) else s_nat.index[-1]).strftime("%d-%m-%Y")
+    a_usd = 1.0
+    if moneda == "CLP" and clp is not None:
+        tc = clp[clp.index >= f[COL_FECHA]]
+        a_usd = 1 / float(tc.iloc[0] if len(tc) else clp.iloc[-1])
+    cant, monto, p = f[COL_CANT], f[COL_MONTO], f[COL_PRECIO]
+    obs = []
+    if pd.notna(p):
+        p, aviso_p = revisar_precio(float(p), ref, moneda)
+        obs += [aviso_p] if aviso_p else []
+        origen = "ingresado por ti" + (" (corregido)" if aviso_p and "interpretado" in aviso_p else "")
+    elif pd.notna(cant) and pd.notna(monto):
+        p = float(monto) / (float(cant) * a_usd)
+        origen = "calculado: monto ÷ cantidad"
+        _, aviso_p = revisar_precio(p, ref, moneda)
+        obs += [aviso_p.replace("el precio ingresado", "el precio implícito (monto ÷ cantidad)")] if aviso_p else []
+    else:
+        p = ref
+        origen = f"cierre de Yahoo Finance del {fecha_ref}"
+    if pd.isna(cant):
+        cant = float(monto) / (p * a_usd)
+    cant = float(cant)
+    invertido = cant * p * a_usd
+    if pd.notna(monto) and pd.notna(f[COL_PRECIO]) and abs(invertido / float(monto) - 1) > 0.05:
+        obs.append(f"cantidad × precio = {ui.usd(invertido)} no coincide con el monto indicado "
+                   f"({ui.usd(float(monto))}); se usó cantidad × precio")
+    actual = float(precios[t].dropna().iloc[-1])
     filas.append({
-        "Activo": f["Activo"], "Tipo": universo.tipo_de_activo(f["Activo"]),
-        "Fecha de compra": f["Fecha de compra"], "Cantidad": float(f["Cantidad"]),
-        "Precio de compra": precio_compra, "Precio actual": actual,
-        "Invertido": precio_compra * f["Cantidad"], "Valor actual": actual * f["Cantidad"],
+        "Activo": t, "Tipo": universo.clase_de(t), "Fecha de compra": f[COL_FECHA], "Cantidad": cant,
+        "Precio de compra (moneda original)": p, "Moneda": moneda, "Origen del precio": origen,
+        "Precio de compra": p * a_usd, "Precio actual": actual,
+        "Invertido": invertido, "Valor actual": actual * cant, "Observación": "; ".join(obs) or "—",
     })
+    observaciones += [f"**{t}**: {o}." for o in obs]
 lotes = pd.DataFrame(filas)
 lotes["Ganancia (USD)"] = lotes["Valor actual"] - lotes["Invertido"]
 lotes["Rentabilidad"] = lotes["Valor actual"] / lotes["Invertido"] - 1
+
+with st.expander("Así interpretamos tus datos", expanded=bool(observaciones or estado.get("notas"))):
+    for n in (estado.get("notas") or []):
+        st.markdown(f"- {ui.md(n)}")
+    for o in observaciones:
+        st.markdown(f"- {ui.md(o)}")
+    st.dataframe(lotes[["Activo", "Fecha de compra", "Cantidad", "Precio de compra (moneda original)", "Moneda",
+                        "Origen del precio", "Invertido", "Observación"]], hide_index=True, column_config={
+        "Fecha de compra": st.column_config.DateColumn(format="DD-MM-YYYY"),
+        "Cantidad": st.column_config.NumberColumn(format="%.8f"),
+        "Precio de compra (moneda original)": st.column_config.NumberColumn("Precio por unidad", format="localized"),
+        "Invertido": st.column_config.NumberColumn("Invertido (USD)", format="dollar"),
+        "Observación": st.column_config.TextColumn(width="large"),
+    })
+    st.caption("Monto invertido = cantidad × precio por unidad. Las acciones chilenas (.SN) cotizan en pesos y se "
+               "convierten a dólares con el tipo de cambio de cada día (USD/CLP de Yahoo Finance).")
 
 invertido, valor = lotes["Invertido"].sum(), lotes["Valor actual"].sum()
 primera = lotes["Fecha de compra"].min()
@@ -199,11 +319,11 @@ for _, l in lotes.iterrows():
     if len(spy_compra):
         referencia += l["Invertido"] / spy_compra.iloc[0] * spy * activo
 
-st.header("Resumen")
+ui.seccion("3. Resultado", "Rentabilidad real desde cada compra, en dólares")
 k = st.columns(4)
 k[0].metric("Monto invertido", ui.usd(invertido), border=True)
 k[1].metric("Valor actual", ui.usd(valor), ui.pct(valor / invertido - 1), border=True)
-k[2].metric("Ganancia / pérdida", ui.usd(valor - invertido), border=True)
+k[2].metric("Ganancia / pérdida", ui.usd(valor - invertido), ui.pct(valor / invertido - 1), border=True)
 k[3].metric("Si lo hubieras puesto en el S&P 500", ui.usd(float(referencia.iloc[-1])),
             ui.pct(float(referencia.iloc[-1]) / invertido - 1), border=True)
 
@@ -214,10 +334,11 @@ with c2:
     composicion = lotes.groupby("Activo")["Valor actual"].sum() / valor
     st.plotly_chart(graficos.barras_pesos(composicion, titulo="Composición actual"), theme=None, config=graficos.CONFIG)
 
-st.dataframe(lotes, hide_index=True, column_config={
+st.dataframe(lotes[["Activo", "Tipo", "Fecha de compra", "Cantidad", "Precio de compra", "Precio actual", "Invertido",
+                    "Valor actual", "Ganancia (USD)", "Rentabilidad"]], hide_index=True, column_config={
     "Fecha de compra": st.column_config.DateColumn(format="DD-MM-YYYY"),
-    "Cantidad": st.column_config.NumberColumn(format="%.6f"),
-    "Precio de compra": st.column_config.NumberColumn(format="dollar"),
+    "Cantidad": st.column_config.NumberColumn("Cantidad (unidades)", format="%.8f"),
+    "Precio de compra": st.column_config.NumberColumn("Precio de compra (USD)", format="dollar"),
     "Precio actual": st.column_config.NumberColumn(format="dollar"),
     "Invertido": st.column_config.NumberColumn(format="dollar"),
     "Valor actual": st.column_config.NumberColumn(format="dollar"),
@@ -228,7 +349,7 @@ st.dataframe(lotes, hide_index=True, column_config={
 # --------------------------------------------------------------------------
 # Proyección Monte Carlo desde la trayectoria desde la compra
 # --------------------------------------------------------------------------
-st.header("Proyección Monte Carlo")
+ui.seccion("Proyección Monte Carlo", "Escenarios futuros estimados con la historia de tus propios activos")
 cantidades = lotes.groupby("Activo")["Cantidad"].sum()
 habiles = precios.index[precios.index.dayofweek < 5]
 cartera_actual = (precios.loc[habiles, cantidades.index] * cantidades).sum(axis=1)  # tus cantidades de hoy
@@ -281,7 +402,7 @@ ui.bloque_montecarlo(valores, valor, fechas_fut, estado["horizonte"], historia=h
 # --------------------------------------------------------------------------
 # Estudio técnico
 # --------------------------------------------------------------------------
-st.header("Estudio técnico de tu cartera")
+ui.seccion("Estudio técnico de tu cartera")
 resumenes = []
 for t in tickers:
     r = tecnico.resumen_tecnico(precios[t].dropna(), t)
@@ -339,7 +460,7 @@ if len(tickers) >= 2:
     corr = np.log(precios.loc[habiles, tickers]).diff().iloc[-252:].corr()
     st.plotly_chart(graficos.mapa_correlacion(corr), theme=None, config=graficos.CONFIG)
 
-st.subheader("Gráfico por activo")
+ui.seccion("Gráfico por activo", "TradingView con herramientas de dibujo y gráfico propio con datos de Yahoo Finance")
 fechas_compra = lotes.groupby("Activo")["Fecha de compra"].min().to_dict()
 ui.bloque_tradingview(tickers, "mi_cartera", fechas_compra)
 
